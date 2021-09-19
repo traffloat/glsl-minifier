@@ -1,45 +1,47 @@
+#!/usr/bin/env ruby
+
 # Copyright (c) 2013 Chananya Freiman (aka GhostWolf)
 
 # Used to generate all the permutations of vector fields of length 2-4 (xyzw, rgba, stpq)
 # E.g., xx xy xz xw yx yy yz yw ...
 def gen_sizzle_permutations()
   perms = []
-  
+
   (2..4).each { |k|
     perms += ["x", "y", "z", "w"].repeated_permutation(k).to_a().map! { |v| v.join("") }
     perms += ["r", "g", "b", "a"].repeated_permutation(k).to_a().map! { |v| v.join("") }
     perms += ["s", "t", "p", "q"].repeated_permutation(k).to_a().map! { |v| v.join("") }
   }
-  
+
   return perms
 end
 
 # Rename language keywords and types using #defines where it will reduce the overall size
 def add_defines(data, language_words)
   defines = []
-  
+
   language_words.each { |v|
     uses = data.scan(/\b#{v[0]}\b/).length
     usage = uses * v[0].length
-    
+
     if usage > 0
       define = "#define #{v[1]} #{v[0]}\n"
       define_usage = define.length + uses * v[1].length
-      
+
       if define_usage < usage
         defines.push("#define #{v[1]} #{v[0]}")
-        
+
         data.gsub!(/\b#{v[0]}\b/, v[1])
       end
     end
   }
-  
+
   return "\n" + defines.join("\n") + "\n" + data
 end
 
 def preprocess_defines(defines)
   rewrites = {}
-  
+
   # Get inline values for simple number equation #defines
   # E.g.: 5 => 5, 5*2 => 10
   defines.each { |v|
@@ -50,7 +52,7 @@ def preprocess_defines(defines)
     rescue
     end
   }
-  
+
   # Get inline values for #define equations that have the previously inlined #defines in their values
   # E.g.: N/2 => 5/2 => 2.5, assuming N was inlined as 5
   defines.each { |v|
@@ -60,7 +62,7 @@ def preprocess_defines(defines)
         rewrites.each { |k, n|
           s.gsub!(/\b#{k}\b/, n)
         }
-        
+
         n = eval(s).to_s()
         v[3] = n
       rescue
@@ -76,7 +78,7 @@ def inline_defines(defines, data)
       data.sub!(v[0], "")
     end
   }
-  
+
   # Second pass inlines the values
   defines.each { |v|
     if v[3]
@@ -90,7 +92,7 @@ def rewrite_numbers(data)
   data.gsub!(/0x[0-9a-fA-F]+/) { |n|
     n.to_i(16)
   }
-  
+
   # Remove useless zeroes
   data.gsub!(/\b\d*\.?\d+\b/) { |n|
     if n["."]
@@ -99,16 +101,16 @@ def rewrite_numbers(data)
       n.to_i().to_s()
     end
   }
-  
+
   # Remove useless zeroes
   data.gsub!(/[0]+(\.\d+)/, "\\1")
   data.gsub!(/(\d+\.)[0]+/, "\\1")
-  
+
   # Change integers to exponent representation if it's shorter
   data.gsub!(/(\d+?)(0+)/) {
     n = $1
     e = $2
-    
+
     if e.size > 2
       "#{n}e#{(e.size - 1)}"
     else
@@ -136,26 +138,26 @@ end
 # Rename the members of all structs
 def rename_members(data, map, datatypes)
   source = ""
-  
+
   parse_structs(data, datatypes).each_with_index { |chunk, i|
     if i % 2 != 0
       # Rename the members
       rename_struct_members(chunk, map, datatypes)
-      
+
       tokens = chunk.split(/(struct \w+{)(.*?)(};)/m)
-      
+
       source += tokens[1]
-      
+
       # All global variables in global scope can be combined, unless they exist in #ifdefs
       outer = tokens[2].gsub(/(#if.*?#endif)/m, "")
-      
+
       source += group_list(outer.scan(/()(#{datatypes})\s+(\w+)(.*?);/))
-      
+
       tokens[2].split(/(#ifdef.*?#endif)/m).each { |chunk|
         # Do the same thing inside #ifdefs
         if chunk.start_with?("#if")
           tokens = chunk.split(/(#ifdef.*?\n)(.*?)(#endif)/m)
-          
+
           source += tokens[1]
           source += group_list(tokens[2].scan(/()(#{datatypes})\s+(\w+)(.*?);/))
           source += tokens[2].gsub(/(#{datatypes})\s+(\w+)(.*?);/, "")
@@ -165,17 +167,17 @@ def rename_members(data, map, datatypes)
           source += chunk.gsub(/(#{datatypes})\s+(\w+)(.*?);/, "")
         end
       }
-      
+
       source += "};"
     else
       source += chunk
     end
   }
-  
+
   map.each { |v|
     source.gsub!(/\.\b#{v[0]}\b/, ".#{map[v[0]]}")
   }
-  
+
   return source
 end
 
@@ -189,33 +191,33 @@ end
 def parse_functions(source, datatypes)
   pass = source.split(/((?:#{datatypes})\s+\w+\s*\(.*?\))/)
   chunks = [[pass[0]]]
-  
+
   (1...pass.size).step(2) { |i|
     head = pass[i].split(/\(/)
     body_with_extra = pass[i + 1]
-    
+
     start = body_with_extra.index("{")
     index = start + 1
     level = 1
-    
+
     while level > 0 and index < body_with_extra.length do
       char = body_with_extra[index]
-      
+
       if char == "}"
         level -= 1
       elsif char == "{"
         level += 1
       end
-      
+
       index += 1
     end
-    
+
     body = body_with_extra[0...index]
     extra = body_with_extra[index..body_with_extra.size]
-    
+
     chunks +=  [[head[0], "(" + head[1], body], [extra]]
   }
-  
+
   return chunks
 end
 
@@ -224,33 +226,33 @@ def rename_function_locals(data, datatypes)
   names = [*("a".."z"), *("aa".."zz")]
   arguments = []
   locals = []
-  
+
   # Grab all the argument names
   data[1].scan(/(?:in\s+|out\s+)?(?:#{datatypes})\s+(\w+)/).each { |argument|
     arguments += argument
   }
-  
+
   # Short names must always come before longer names
   arguments.sort!()
-  
+
   data[2].scan(/(#{datatypes}) (.*?);/m).each { |local_list|
     local_list[1].split("=")[0].split(",").each { |local|
       locals += [local.strip()]
     }
   }
-  
+
   # Short names must always come before longer names
   locals.sort!()
-  
+
   # Rename function arguments
   arguments.each { |argument|
     name = names.shift()
     reg = /\b#{argument}\b/
-    
+
     data[1].sub!(reg, name)
     data[2].gsub!(reg, name)
   }
-  
+
   # Rename function locals
   locals.each { |local|
     data[2].gsub!(/\b#{local.strip()}\b/, names.shift())
@@ -261,17 +263,17 @@ end
 def remove_whitespace(oldsource)
   need_newline = false
   source = ""
-  
+
   oldsource = oldsource.sub(/^\n+/, "")
-  
+
   oldsource.each_line { |line|
     line = line.strip().gsub(/\s{2,}|\t/, " ")
-    
+
     if line[0] == "#"
       if need_newline
         source += "\n"
       end
-      
+
       source += line + "\n"
       need_newline = false
     else
@@ -279,17 +281,17 @@ def remove_whitespace(oldsource)
       need_newline = true
     end
   }
-  
+
   return source.gsub(/\n+/, "\n")
 end
 
 def get_used_functions_in_function(used_functions, main_function, function_chunks)
   function_chunks.each { |f|
     match = main_function[2][/\b#{f[0]}\b/]
-    
+
     if match
       used_functions[match] = 1
-      
+
       get_used_functions_in_function(used_functions, function_chunks[match], function_chunks)
     end
   }
@@ -305,7 +307,7 @@ def remove_dead_functions(shaders, datatypes)
     parse_functions(shader, datatypes).each_with_index { |chunk, i|
       if i % 2 != 0
         name = chunk[0].split(/\s+/)[1]
-      
+
         if name != "main"
           function_chunks[name] = chunk
         else
@@ -314,14 +316,14 @@ def remove_dead_functions(shaders, datatypes)
       end
     }
   }
-  
+
   main_chunks.each { |main_function|
     get_used_functions_in_function(used_functions, main_function, function_chunks)
   }
-  
+
   shaders.map! { |shader|
     source = ""
-    
+
     parse_functions(shader, datatypes).each_with_index { |chunk, i|
       if i % 2 != 0
         if used_functions[chunk[0].split(/\s+/)[1]]
@@ -331,7 +333,7 @@ def remove_dead_functions(shaders, datatypes)
         source += chunk.join("")
       end
     }
-    
+
     source
   }
 end
@@ -339,13 +341,13 @@ end
 # Renames function arguments and local variables of all functions
 def rename_locals(oldsource, datatypes)
   source = ""
-  
+
   parse_functions(oldsource, datatypes).each_with_index { |chunk, i|
     rename_function_locals(chunk, datatypes) if i % 2 != 0
-    
+
     source += chunk.join("")
   }
-  
+
   return source
 end
 
@@ -381,12 +383,12 @@ def gen_map(data, names, rewrite)
       [v[0], v[0]]
     end
   }
-  
+
   # Short names must always come before longer names
   map.sort! { |a, b|
     a[0] <=> b[0]
   }
-  
+
   map
 end
 
@@ -400,18 +402,18 @@ def gen_map_map(data, names, rewrite)
       [v[0], v[0]]
     end
   }
-  
+
   # Short names must always come before longer names
   map.sort! { |a, b|
     a[0] <=> b[0]
   }
-  
+
   mapmap = {}
-  
+
   map.each { |v|
     mapmap[v[0]] = v[1]
   }
-  
+
   mapmap
 end
 
@@ -425,42 +427,42 @@ end
 def group_list(list)
   map = {}
   data = ""
-  
+
   list.each { |v|
     if not map[v[0]]
       map[v[0]] = {}
     end
-    
+
     if not map[v[0]][v[1]]
       map[v[0]][v[1]] = []
     end
-    
+
     map[v[0]][v[1]].push([v[2], v[3]])
   }
-  
+
   map.each { |qualifier, v|
     v.each { |datatype, v|
       data += "#{qualifier} #{datatype} #{v.collect { |v| "#{v[0]}#{v[1]}"}.join(",")};"
     }
   }
-  
+
   return data
 end
 
 def group_globals(data, datatypes)
   source = ""
-  
+
   # All global variables in global scope can be combined, unless they exist in #ifdefs
   outer = data.gsub(/(#if.*?#endif)/m, "")
-  
+
   source += group_list(outer.scan(/(uniform|attribute|varying|const) (#{datatypes}) (\w+)(.*?);/))
-  
+
   data.split(/(#if.*?#endif)/m).each { |chunk|
     # Do the same thing inside #ifdefs
     if chunk[/uniform|attribute|varying|const/]
       if chunk.start_with?("#if")
         tokens = chunk.split(/(.*?\n)(.*?)(#endif)/m)
-        
+
         source += tokens[1]
         source += group_list(tokens[2].scan(/(uniform|attribute|varying|const) (#{datatypes}) (\w+)(.*?);/))
         source += tokens[2].gsub(/(uniform|attribute|varying|const) (#{datatypes}) (\w+)(.*?);/, "")
@@ -473,7 +475,7 @@ def group_globals(data, datatypes)
       source += chunk
     end
   }
-  
+
   return source
 end
 
@@ -490,23 +492,23 @@ def minify_sources(shaders, rewriteall)
   varyings = []
   constants = [];
   members = [];
-  
+
   shaders.map! { |shader|
     remove_comments(shader)
     remove_whitespace(shader)
   }
-  
+
   # Get struct names
   shaders.each { |shader|
     structs += get_struct_names(shader)
   }
-  
+
   # Create a regex of all the known data types
   datatypes_string = datatypes.concat(structs).join("|")
-  
+
   # Remove dead functions that are not in the call graph of the main() function in any of the inputs
   remove_dead_functions(shaders, datatypes_string)
-  
+
   # Get all function/uniform/attribute/varying names, and define names and their values
   shaders.each { |shader|
     functions += get_function_names(shader, datatypes_string)
@@ -517,7 +519,7 @@ def minify_sources(shaders, rewriteall)
     defines += get_defines(shader)
     members += get_member_names(shader, datatypes_string);
   }
-  
+
   function_map = gen_map(functions, names, true)
   struct_map = gen_map(structs, names, true)
   uniform_map = gen_map(uniforms, names, rewriteall)
@@ -525,72 +527,79 @@ def minify_sources(shaders, rewriteall)
   varyings_map = gen_map(varyings, names, true)
   constants_map = gen_map(constants, names, true)
   member_map = gen_map_map(members, [*("a".."z"), *("A".."Z"), *("aa".."zz")], rewriteall)
-  
+
   language_words = language_words.uniq().map { |v|
     [v, names.shift()]
   }
-  
+
   # Preprocess #defines to prepare them for inlining
   preprocess_defines(defines)
-  
+
   shaders.map! { |shader|
     # Inline #defines
     inline_defines(defines, shader)
-    
+
     shader = group_globals(shader, datatypes_string)
-    
+
     # Rewrite function names
     function_map.each { |function|
       shader.gsub!(/\b#{function[0]}\b/, function[1])
     }
-    
+
     # Rename function arguments and local variables
     shader = rename_locals(shader, datatypes_string)
-    
+
     # Rewrite user defined type names
     struct_map.each { |struct|
       shader.gsub!(/\b#{struct[0]}\b/, struct[1])
     }
-    
+
     # Rewrite uniform names
     rewrite_map(uniform_map, shader)
-    
+
     # Rewrite attribute names
     rewrite_map(attribute_map, shader)
-    
+
     # Rewrite varying names
     rewrite_map(varyings_map, shader)
-    
+
     # Rewrite varying names
     rewrite_map(constants_map, shader)
-    
+
     # Rewrite struct member names
     shader = rename_members(shader, member_map, datatypes_string)
-    
+
     # Rewrite numbers
     rewrite_numbers(shader)
-    
+
     shader = add_defines(shader, language_words)
-    
+
     shader = remove_whitespace(shader).gsub("\n", "\\n")
-    
+
     # If the first line of a shader is a pre-processor directive, it will cause an error when concatenating it, so add a new line
     if shader[0] == "#"
       shader = "\\n" + shader
     end
-    
+
     shader
   }
-  
+
   global_map = {}
-  
+
   uniform_map.concat(attribute_map).each { |v|
     global_map[v[0]] = v[1]
   }
-  
+
   return [shaders, global_map, member_map]
 end
 
 def minify_files(paths, rewriteall)
   minify_sources(paths.map { |path| IO.read(path) }, rewriteall)
 end
+
+Dir["**/*.{vert,frag}"].each { |file|
+  next if file.include? ".min."
+  new_path = "#{file[0..-5]}min#{file[-5..]}"
+  min_src = minify_files([file], true)[0][0].gsub("\\n", "\n")
+  File.write(new_path, min_src)
+}
